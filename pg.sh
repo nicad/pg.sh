@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+print_connection_info() {
+  local url="$1"
+  echo "Python (psycopg3):"
+  echo "import psycopg"
+  echo "conn = psycopg.connect(\"$url\")"
+  echo
+  echo "Shell:"
+  echo "  psql \"$url\""
+}
+
 # --- parse arguments
 STATUS_MODE=false
 STOP_MODE=false
@@ -48,6 +58,14 @@ if [[ "$STATUS_MODE" == true ]]; then
       echo "$D: not initialized"
     elif pg_ctl -D "$PGDATA" status > /dev/null 2>&1; then
       echo "$D: running"
+      D_ABS="$(cd "$D" && pwd)"
+      PORT_FILE="$D_ABS/PG_PORT"
+      if [[ -f "$PORT_FILE" ]]; then
+        PORT=$(cat "$PORT_FILE")
+        PG_URL="postgresql://localhost/postgres?host=$D_ABS/socket&port=$PORT"
+        echo
+        print_connection_info "$PG_URL"
+      fi
     else
       echo "$D: stopped"
     fi
@@ -160,11 +178,4 @@ echo "Postgres ready:"
 echo "  PG_PORT=$PORT"
 echo "  PG_URL=$PG_URL"
 echo
-echo "Python (psycopg3):"
-cat <<EOF
-import psycopg
-conn = psycopg.connect("$PG_URL")
-EOF
-echo
-echo "Shell:"
-echo "  psql \"$PG_URL\""
+print_connection_info "$PG_URL"
