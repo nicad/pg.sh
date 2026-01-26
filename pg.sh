@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+print_usage() {
+  echo "pg.sh - local PostgreSQL server manager"
+  echo
+  echo "Usage:"
+  echo "  pg.sh PATH        start server and print connection info"
+  echo "  pg.sh PATH/       start server and open psql shell"
+  echo "  pg.sh PATH --stop stop server"
+  echo "  pg.sh --status    show status of all *.pgdb directories"
+  echo "  pg.sh PATH --status"
+  echo "                    show status of specific directory"
+  echo "  pg.sh -h|--help   show this help"
+  echo
+  echo "Examples:"
+  echo "  pg.sh mydb.pgdb       # start server, print connection info"
+  echo "  pg.sh mydb.pgdb/      # start server, open psql shell"
+  echo "  pg.sh mydb.pgdb --stop"
+  echo "  pg.sh --status"
+}
+
 print_connection_info() {
   local url="$1"
   echo "Python (psycopg3):"
@@ -19,7 +38,10 @@ MODE=""
 SQL=""
 
 for arg in "$@"; do
-  if [[ "$arg" == "--status" ]]; then
+  if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+    print_usage
+    exit 0
+  elif [[ "$arg" == "--status" ]]; then
     STATUS_MODE=true
   elif [[ "$arg" == "--stop" ]]; then
     STOP_MODE=true
@@ -57,17 +79,24 @@ if [[ "$STATUS_MODE" == true ]]; then
     elif [[ ! -d "$PGDATA" ]]; then
       echo "$D: not initialized"
     elif pg_ctl -D "$PGDATA" status > /dev/null 2>&1; then
-      echo "$D: running"
       D_ABS="$(cd "$D" && pwd)"
+      PID=$(head -1 "$PGDATA/postmaster.pid" 2>/dev/null || echo "?")
+      echo "$D: running (PID: $PID)"
       PORT_FILE="$D_ABS/PG_PORT"
       if [[ -f "$PORT_FILE" ]]; then
         PORT=$(cat "$PORT_FILE")
         PG_URL="postgresql://localhost/postgres?host=$D_ABS/socket&port=$PORT"
         echo
         print_connection_info "$PG_URL"
+        echo
+        echo "Stop:"
+        echo "  $0 $D --stop"
       fi
     else
       echo "$D: stopped"
+      echo
+      echo "Start:"
+      echo "  $0 $D"
     fi
   done
   exit 0
@@ -97,11 +126,7 @@ if [[ "$STOP_MODE" == true ]]; then
 fi
 
 if [[ -z "$DIR" ]]; then
-  echo "usage:"
-  echo "  pg.sh PATH        start server and print connection info"
-  echo "  pg.sh PATH/       start server and open shell"
-  echo "  pg.sh PATH --stop stop server"
-  echo "  pg.sh --status    show status of *.pgdb directories"
+  print_usage
   exit 1
 fi
 
