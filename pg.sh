@@ -5,21 +5,22 @@ print_usage() {
   echo "pg.sh - local PostgreSQL server manager"
   echo
   echo "Usage:"
-  echo "  pg.sh [PATH]            start server and open psql shell"
-  echo "  pg.sh PATH --create     create a new database"
-  echo "  pg.sh [PATH] --stop     stop server"
-  echo "  pg.sh [PATH] --status   show status"
-  echo "  pg.sh -h|--help         show this help"
+  echo "  pg.sh [PATH]          start server and open psql shell"
+  echo "  pg.sh create PATH     create a new database"
+  echo "  pg.sh start [PATH]    start server (no shell)"
+  echo "  pg.sh stop [PATH]     stop server"
+  echo "  pg.sh status [PATH]   show status and connection info"
+  echo "  pg.sh help            show this help"
   echo
   echo "PATH can be 'mydb' or 'mydb.pgdb' (the .pgdb suffix is added automatically)."
   echo "When PATH is omitted, uses the single *.pgdb directory in the current folder."
   echo
   echo "Examples:"
-  echo "  pg.sh mydb --create     # create mydb.pgdb"
-  echo "  pg.sh mydb              # open psql shell"
-  echo "  pg.sh                   # open psql shell (auto-detect *.pgdb)"
-  echo "  pg.sh mydb --stop"
-  echo "  pg.sh --status"
+  echo "  pg.sh create mydb     # create mydb.pgdb"
+  echo "  pg.sh mydb            # open psql shell"
+  echo "  pg.sh                 # open psql shell (auto-detect *.pgdb)"
+  echo "  pg.sh stop mydb"
+  echo "  pg.sh status"
 }
 
 print_connection_info() {
@@ -32,7 +33,6 @@ print_connection_info() {
   echo "  psql \"$url\""
 }
 
-# Normalize PATH: strip trailing slash, append .pgdb if missing
 normalize_dir() {
   local d="$1"
   d="${d%/}"
@@ -42,7 +42,6 @@ normalize_dir() {
   echo "$d"
 }
 
-# Auto-detect a single *.pgdb directory in the current folder
 auto_detect_dir() {
   shopt -s nullglob
   local dirs=(*.pgdb)
@@ -50,7 +49,7 @@ auto_detect_dir() {
 
   if [[ ${#dirs[@]} -eq 0 ]]; then
     echo "error: no .pgdb directory found in current folder" >&2
-    echo "hint: use 'pg.sh NAME --create' to create one" >&2
+    echo "hint: use 'pg.sh create NAME' to create one" >&2
     exit 1
   elif [[ ${#dirs[@]} -gt 1 ]]; then
     echo "error: multiple .pgdb directories found:" >&2
@@ -61,29 +60,122 @@ auto_detect_dir() {
   echo "${dirs[0]}"
 }
 
-# --- parse arguments
-STATUS_MODE=false
-STOP_MODE=false
-CREATE_MODE=false
-DIR=""
-
-for arg in "$@"; do
-  if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-    print_usage
-    exit 0
-  elif [[ "$arg" == "--status" ]]; then
-    STATUS_MODE=true
-  elif [[ "$arg" == "--stop" ]]; then
-    STOP_MODE=true
-  elif [[ "$arg" == "--create" ]]; then
-    CREATE_MODE=true
-  elif [[ -z "$DIR" ]]; then
-    DIR="$arg"
+resolve_dir() {
+  if [[ -n "${1:-}" ]]; then
+    normalize_dir "$1"
+  else
+    auto_detect_dir
   fi
-done
+}
 
-# --- handle --status mode
-if [[ "$STATUS_MODE" == true ]]; then
+ensure_running() {
+  local dir="$1"
+  local pgdata="$dir/pgdata"
+  local sockdir="$dir/socket"
+  local port_file="$dir/PG_PORT"
+
+  if [[ ! -d "$pgdata" ]]; then
+    echo "error: $dir is not initialized (missing pgdata)" >&2
+    exit 1
+  fi
+
+  mkdir -p "$sockdir"
+
+  if [[ ! -f "$port_file" ]]; then
+    echo "error: $dir is missing PG_PORT file" >&2
+    exit 1
+  fi
+  local port
+  port=$(cat "$port_file")
+
+  if ! pg_ctl -D "$pgdata" status > /dev/null 2>&1; then
+    echo "$ pg_ctl -D $pgdata -o \"-k $sockdir -p $port -h ''\" start"
+    pg_ctl -D "$pgdata" \
+      -o "-k $sockdir -p $port -h ''" \
+      start
+    echo
+  fi
+}
+
+pg_url() {
+  local dir="$1"
+  local port
+  port=$(cat "$dir/PG_PORT")
+  echo "postgresql://localhost/postgres?host=$dir/socket&port=$port"
+}
+
+write_env() {
+  local dir="$1"
+  local port
+  port=$(cat "$dir/PG_PORT")
+  local url
+  url=$(pg_url "$dir")
+  cat > "$dir/.env" <<EOF
+PG_PORT=$port
+PG_URL=$url
+EOF
+}
+
+# --- parse action
+ACTION=""
+case "${1:-}" in
+  create)  ACTION=create;  shift ;;
+  start)   ACTION=start;   shift ;;
+  stop)    ACTION=stop;     shift ;;
+  status)  ACTION=status;   shift ;;
+  help|-h|--help) print_usage; exit 0 ;;
+esac
+
+DIR="${1:-}"
+
+# --- create
+if [[ "$ACTION" == "create" ]]; then
+  if [[ -z "$DIR" ]]; then
+    echo "error: PATH is required for create" >&2
+    echo "usage: pg.sh create PATH" >&2
+    exit 1
+  fi
+  DIR="$(normalize_dir "$DIR")"
+
+  if [[ -d "$DIR" ]]; then
+    echo "error: $DIR already exists" >&2
+    exit 1
+  fi
+
+  mkdir -p "$DIR"
+  DIR="$(cd "$DIR" && pwd)"
+
+  PGDATA="$DIR/pgdata"
+  SOCKDIR="$DIR/socket"
+  PORT_FILE="$DIR/PG_PORT"
+
+  mkdir -p "$SOCKDIR"
+
+  echo "$ initdb -D $PGDATA --no-locale --encoding=UTF8"
+  initdb -D "$PGDATA" --no-locale --encoding=UTF8
+  echo
+
+  PORT=$(shuf -i 55000-59999 -n 1)
+  echo "$PORT" > "$PORT_FILE"
+  echo "Assigned port: $PORT"
+
+  echo "$ pg_ctl -D $PGDATA -o \"-k $SOCKDIR -p $PORT -h ''\" start"
+  pg_ctl -D "$PGDATA" \
+    -o "-k $SOCKDIR -p $PORT -h ''" \
+    start
+  echo
+
+  write_env "$DIR"
+
+  PID=$(head -1 "$PGDATA/postmaster.pid" 2>/dev/null || echo "?")
+  echo "Created $DIR (PID: $PID)"
+  echo
+  print_connection_info "$(pg_url "$DIR")"
+  exit 0
+fi
+
+# --- status
+if [[ "$ACTION" == "status" ]]; then
   if [[ -n "$DIR" ]]; then
     DIR="$(normalize_dir "$DIR")"
     DIRS=("$DIR")
@@ -118,25 +210,21 @@ if [[ "$STATUS_MODE" == true ]]; then
         print_connection_info "$PG_URL"
         echo
         echo "Stop:"
-        echo "  $0 $D --stop"
+        echo "  pg.sh stop ${D%%.pgdb}"
       fi
     else
       echo "$D: stopped"
       echo
       echo "Start:"
-      echo "  $0 ${D%%.pgdb}"
+      echo "  pg.sh ${D%%.pgdb}"
     fi
   done
   exit 0
 fi
 
-# --- handle --stop mode
-if [[ "$STOP_MODE" == true ]]; then
-  if [[ -n "$DIR" ]]; then
-    DIR="$(normalize_dir "$DIR")"
-  else
-    DIR="$(auto_detect_dir)"
-  fi
+# --- stop
+if [[ "$ACTION" == "stop" ]]; then
+  DIR="$(resolve_dir "$DIR")"
   PGDATA="$DIR/pgdata"
 
   if [[ ! -d "$PGDATA" ]]; then
@@ -153,114 +241,49 @@ if [[ "$STOP_MODE" == true ]]; then
   exit 0
 fi
 
-# --- handle --create mode
-if [[ "$CREATE_MODE" == true ]]; then
-  if [[ -z "$DIR" ]]; then
-    echo "error: PATH is required for --create" >&2
-    echo "usage: pg.sh PATH --create" >&2
-    exit 1
-  fi
-  DIR="$(normalize_dir "$DIR")"
+# --- start (no shell)
+if [[ "$ACTION" == "start" ]]; then
+  DIR="$(resolve_dir "$DIR")"
 
-  if [[ -d "$DIR" ]]; then
-    echo "error: $DIR already exists" >&2
+  if [[ ! -d "$DIR" ]]; then
+    echo "error: $DIR does not exist" >&2
+    echo "hint: use 'pg.sh create ${DIR%%.pgdb}' to create it" >&2
     exit 1
   fi
 
-  mkdir -p "$DIR"
   DIR="$(cd "$DIR" && pwd)"
+  ensure_running "$DIR"
+  write_env "$DIR"
 
-  PGDATA="$DIR/pgdata"
-  SOCKDIR="$DIR/socket"
-  ENVFILE="$DIR/.env"
-  PORT_FILE="$DIR/PG_PORT"
-
-  mkdir -p "$SOCKDIR"
-
-  echo "$ initdb -D $PGDATA --no-locale --encoding=UTF8"
-  initdb -D "$PGDATA" --no-locale --encoding=UTF8
+  URL="$(pg_url "$DIR")"
+  echo "Postgres ready:"
+  echo "  PG_URL=$URL"
   echo
-
-  PORT=$(shuf -i 55000-59999 -n 1)
-  echo "$PORT" > "$PORT_FILE"
-  echo "Assigned port: $PORT"
-
-  echo "$ pg_ctl -D $PGDATA -o \"-k $SOCKDIR -p $PORT -h ''\" start"
-  pg_ctl -D "$PGDATA" \
-    -o "-k $SOCKDIR -p $PORT -h ''" \
-    start
-  echo
-
-  PG_URL="postgresql://localhost/postgres?host=$SOCKDIR&port=$PORT"
-
-  cat > "$ENVFILE" <<EOF
-PG_PORT=$PORT
-PG_URL=$PG_URL
-EOF
-
-  PID=$(head -1 "$PGDATA/postmaster.pid" 2>/dev/null || echo "?")
-  echo "Created $DIR (PID: $PID)"
-  echo
-  print_connection_info "$PG_URL"
+  print_connection_info "$URL"
   exit 0
 fi
 
 # --- default: open psql shell
-if [[ -n "$DIR" ]]; then
-  DIR="$(normalize_dir "$DIR")"
-else
-  DIR="$(auto_detect_dir)"
-fi
+DIR="$(resolve_dir "$DIR")"
 
 if [[ ! -d "$DIR" ]]; then
   echo "error: $DIR does not exist" >&2
-  echo "hint: use 'pg.sh ${DIR%%.pgdb} --create' to create it" >&2
+  echo "hint: use 'pg.sh create ${DIR%%.pgdb}' to create it" >&2
   exit 1
 fi
 
 DIR="$(cd "$DIR" && pwd)"
+ensure_running "$DIR"
+write_env "$DIR"
 
-PGDATA="$DIR/pgdata"
-SOCKDIR="$DIR/socket"
-ENVFILE="$DIR/.env"
-PORT_FILE="$DIR/PG_PORT"
+URL="$(pg_url "$DIR")"
 
-if [[ ! -d "$PGDATA" ]]; then
-  echo "error: $DIR is not initialized (missing pgdata)" >&2
-  exit 1
-fi
-
-mkdir -p "$SOCKDIR"
-
-# read port
-if [[ ! -f "$PORT_FILE" ]]; then
-  echo "error: $DIR is missing PG_PORT file" >&2
-  exit 1
-fi
-PORT=$(cat "$PORT_FILE")
-
-# start postgres if not running
-if ! pg_ctl -D "$PGDATA" status > /dev/null 2>&1; then
-  echo "$ pg_ctl -D $PGDATA -o \"-k $SOCKDIR -p $PORT -h ''\" start"
-  pg_ctl -D "$PGDATA" \
-    -o "-k $SOCKDIR -p $PORT -h ''" \
-    start
-  echo
-fi
-
-PG_URL="postgresql://localhost/postgres?host=$SOCKDIR&port=$PORT"
-
-cat > "$ENVFILE" <<EOF
-PG_PORT=$PORT
-PG_URL=$PG_URL
-EOF
-
-TABLES=$(psql "$PG_URL" -At -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null)
+TABLES=$(psql "$URL" -At -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null)
 if [[ -n "$TABLES" ]]; then
   echo "Tables:"
   echo "$TABLES" | sed 's/^/  /'
   echo
 fi
-echo "psql \"$PG_URL\""
+echo "psql \"$URL\""
 echo
-exec psql "$PG_URL"
+exec psql "$URL"

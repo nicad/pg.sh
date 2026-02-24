@@ -5,11 +5,12 @@ A single-file bash script for managing local PostgreSQL databases. Each database
 ## Usage
 
 ```
-pg.sh PATH --create     Create a new database
-pg.sh [PATH]            Open psql shell (starts server if needed)
-pg.sh [PATH] --stop     Stop the server
-pg.sh [PATH] --status   Show server status and connection info
-pg.sh --help            Show help
+pg.sh [PATH]          Open psql shell (starts server if needed)
+pg.sh create PATH     Create a new database
+pg.sh start [PATH]    Start server (no shell)
+pg.sh stop [PATH]     Stop server
+pg.sh status [PATH]   Show status and connection info
+pg.sh help            Show this help
 ```
 
 PATH can be `mydb` or `mydb.pgdb` (the `.pgdb` suffix is added automatically). When omitted, the single `*.pgdb` directory in the current folder is used.
@@ -17,11 +18,11 @@ PATH can be `mydb` or `mydb.pgdb` (the `.pgdb` suffix is added automatically). W
 ## Examples
 
 ```bash
-pg.sh mydb --create   # creates mydb.pgdb/, initializes and starts postgres
+pg.sh create mydb     # creates mydb.pgdb/, initializes and starts postgres
 pg.sh mydb            # opens psql shell, lists tables
 pg.sh                 # same, auto-detects mydb.pgdb/
-pg.sh mydb --stop     # stops the server
-pg.sh --status        # shows status of all *.pgdb dirs
+pg.sh stop mydb       # stops the server
+pg.sh status          # shows status of all *.pgdb dirs
 ```
 
 ## How it works
