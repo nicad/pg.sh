@@ -5,7 +5,7 @@ A single-file bash script for managing local PostgreSQL databases. Each database
 ## Usage
 
 ```
-pg.sh [PATH]          Open psql shell (starts server if needed)
+pg.sh [PATH] [ARGS]   Open psql shell (extra args passed to psql)
 pg.sh create PATH     Create a new database
 pg.sh start [PATH]    Start server (no shell)
 pg.sh stop [PATH]     Stop server
@@ -21,6 +21,8 @@ PATH can be `mydb` or `mydb.pgdb` (the `.pgdb` suffix is added automatically). W
 pg.sh create mydb     # creates mydb.pgdb/, initializes and starts postgres
 pg.sh mydb            # opens psql shell, lists tables
 pg.sh                 # same, auto-detects mydb.pgdb/
+pg.sh mydb -c "SELECT 1"   # run a single command
+echo "SELECT 1" | pg.sh mydb  # pipe SQL through
 pg.sh stop mydb       # stops the server
 pg.sh status          # shows status of all *.pgdb dirs
 ```

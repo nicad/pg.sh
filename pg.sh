@@ -5,7 +5,7 @@ print_usage() {
   echo "pg.sh - local PostgreSQL server manager"
   echo
   echo "Usage:"
-  echo "  pg.sh [PATH]          start server and open psql shell"
+  echo "  pg.sh [PATH] [ARGS]   start server and open psql (extra args passed to psql)"
   echo "  pg.sh create PATH     create a new database"
   echo "  pg.sh start [PATH]    start server (no shell)"
   echo "  pg.sh stop [PATH]     stop server"
@@ -126,7 +126,12 @@ case "${1:-}" in
   help|-h|--help) print_usage; exit 0 ;;
 esac
 
-DIR="${1:-}"
+DIR=""
+if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+  DIR="$1"
+  shift
+fi
+PSQL_ARGS=("$@")
 
 # --- create
 if [[ "$ACTION" == "create" ]]; then
@@ -278,12 +283,14 @@ write_env "$DIR"
 
 URL="$(pg_url "$DIR")"
 
-TABLES=$(psql "$URL" -At -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null)
-if [[ -n "$TABLES" ]]; then
-  echo "Tables:"
-  echo "$TABLES" | sed 's/^/  /'
+if [[ ${#PSQL_ARGS[@]} -eq 0 && -t 0 ]]; then
+  TABLES=$(psql "$URL" -At -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null)
+  if [[ -n "$TABLES" ]]; then
+    echo "Tables:"
+    echo "$TABLES" | sed 's/^/  /'
+    echo
+  fi
+  echo "psql \"$URL\""
   echo
 fi
-echo "psql \"$URL\""
-echo
-exec psql "$URL"
+exec psql "$URL" "${PSQL_ARGS[@]}"
